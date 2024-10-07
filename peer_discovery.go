@@ -1,8 +1,12 @@
 package main
 
 import (
+	"crypto/ecdsa"
+	"encoding/hex"
 	"fmt"
 	"log"
+	"net"
+	"os"
 	"time"
 
 	"github.com/ethereum/go-ethereum/crypto"
@@ -11,19 +15,76 @@ import (
 	"github.com/ethereum/go-ethereum/p2p/enode"
 )
 
+const privateKeyPath = "./nodeKey"
+
+func savePrivateKey(privateKey *ecdsa.PrivateKey) error {
+	//convert the privatekey into bytes
+	keyBytes := crypto.FromECDSA(privateKey)
+
+	//convert the keybytes into hexstring
+	hexKey := hex.EncodeToString(keyBytes)
+
+	return os.WriteFile(privateKeyPath, []byte(hexKey), 0600)
+}
+func loadPrivateKey() (*ecdsa.PrivateKey, error) {
+	//fetch the hex value
+	hexKey, err := os.ReadFile(privateKeyPath)
+	if err != nil {
+		// log.Fatalf("Error occured while loading the hex key:%v", err)
+		println("Error occured while loading the hex Key, creating new one...")
+		return nil, err
+	}
+	//decoding it to key bytes
+
+	key, err := hex.DecodeString(string(hexKey))
+	if err != nil {
+		return nil, err
+	}
+	// Parse the key bytes into an ECDSA private key
+	return crypto.ToECDSA(key)
+}
 func main() {
+	var privateKey *ecdsa.PrivateKey
+
 	println("Started !!")
 	n, err := node.New(&node.Config{}) //n stores the node instance
 	if err != nil {
 		log.Printf("Errorr occured while creating node instance☠️: %v", err)
 	}
 	// fmt.Println(n)
+
 	//Start the node
 	if err := n.Start(); err != nil {
 		log.Printf("Error occured while starting node: %v", err)
 	}
 
 	defer n.Close() //ensures node will stops gracefully when main function ends up
+
+	//generate a new private key
+	privateKey, err = loadPrivateKey()
+	if err != nil {
+		privateKey, err = crypto.GenerateKey()
+		if err != nil {
+			log.Fatalf("Error occured while generating private key :%v", err)
+		}
+
+		if err = savePrivateKey(privateKey); err != nil {
+			log.Fatalf("Error occured while saving private key :%v", err)
+		}
+
+		println("New key saved!!")
+	}
+	println("Loaded private key")
+	fmt.Println(privateKey)
+
+	// Define your node's IP address and ports
+	ip := net.ParseIP("192.168.1.3") // Use your local IP address
+	tcpPort := 30303                 // Example TCP port
+	udpPort := 30303                 // Example UDP port
+
+	//get the enode of my localnode
+	enode_url := enode.NewV4(&privateKey.PublicKey, ip, tcpPort, udpPort)
+	fmt.Println(enode_url)
 
 	//setup discovery parameters (bootnodes which helps to find other peer nodes)
 	bootnodes := []string{
@@ -53,22 +114,15 @@ func main() {
 
 	// fmt.Println(config)
 
-	//generate a new private key
-	privateKey, err := crypto.GenerateKey()
-	if err != nil {
-		log.Printf("Error occured while generating private key: %v", err)
-	}
-	fmt.Println(privateKey)
-
 	println("Starting server...")
 	server := &p2p.Server{
 		Config: p2p.Config{
-			MaxPeers:       5,
+			MaxPeers:       50,
 			PrivateKey:     privateKey,
-			BootstrapNodes: nodes,
+			BootstrapNodes: []*enode.Node{enode_url},
 			Protocols: []p2p.Protocol{
 				{
-					Name:    "Discovery",
+					Name:    "DiscoveryV4",
 					Version: 1,
 					Length:  0,
 					Run: func(peer *p2p.Peer, rw p2p.MsgReadWriter) error {
