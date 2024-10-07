@@ -11,7 +11,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/node"
-	"github.com/ethereum/go-ethereum/p2p"
+	"github.com/ethereum/go-ethereum/p2p/discover"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 )
 
@@ -77,15 +77,28 @@ func main() {
 	println("Loaded private key")
 	fmt.Println(privateKey)
 
+	//===============creating my node to bootnode to let other nodes to search me ask for other peers list========//
+
 	// Define your node's IP address and ports
-	ip := net.ParseIP("192.168.1.3") // Use your local IP address
-	tcpPort := 30303                 // Example TCP port
-	udpPort := 30303                 // Example UDP port
+	// ip := net.ParseIP("192.168.1.3") // Use your local IP address
+	// tcpPort := 30303                 // Example TCP port
+	// udpPort := 30303                 // Example UDP port
 
-	//get the enode of my localnode
-	enode_url := enode.NewV4(&privateKey.PublicKey, ip, tcpPort, udpPort)
-	fmt.Println(enode_url)
+	// //get the enode of my localnode
+	// enode_url := enode.NewV4(&privateKey.PublicKey, ip, tcpPort, udpPort)
+	// fmt.Println(enode_url)
 
+	//=================creating a fileDB using enodeDB==============//
+	db, err := enode.OpenDB("node.db")
+	if err != nil {
+		log.Printf("Error occured while settingup DB:%v", err)
+	}
+
+	defer db.Close()
+	//==================creating localnode===================//
+	localNode := enode.NewLocalNode(db, privateKey)
+
+	//====================================================//
 	//setup discovery parameters (bootnodes which helps to find other peer nodes)
 	bootnodes := []string{
 		"enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303", // bootnode-aws-ap-southeast-1-001
@@ -95,17 +108,83 @@ func main() {
 	}
 
 	//convert bootnodes into enode.Node structure
-	var nodes []*enode.Node
+	nodes := make([]*enode.Node, len(bootnodes))
 
-	for _, bn := range bootnodes {
-		nd, err := enode.ParseV4(bn)
+	for i, bn := range bootnodes {
+		nd, err := enode.Parse(enode.ValidSchemes, bn)
 		if err != nil {
 			log.Printf("Error occured while parsing the bootstrap node: %v", err)
 		}
 		//append the parsed pointer to the nodes slice
-		nodes = append(nodes, nd)
+		nodes[i] = nd
 		// println(nd)
 	}
+
+	//setting up udp discovery session
+	udpAddr := &net.UDPAddr{
+		IP:   net.IPv4zero,
+		Port: 30303,
+	}
+	//create a udp connection
+	udpConn, err := net.ListenUDP("udp", udpAddr)
+	if err != nil {
+		log.Fatalf("Error occured whie creating the udp connection:%v", err)
+	}
+
+	//configuring the discovery protocol and creating v4 instance
+	cfg := discover.Config{
+		PrivateKey: privateKey,
+		Bootnodes:  nodes,
+	}
+
+	//build a channel to receive and handle newly discovered peers
+	peerChan := make(chan *enode.Node)
+
+	//Start a go routine to listen for new peers
+	go func() {
+		for node := range peerChan {
+			log.Printf("Discovered new peer: %s\n", node.String())
+		}
+	}()
+
+	udp, err := discover.ListenV4(udpConn, localNode, cfg)
+	if err != nil {
+		log.Fatalf("Error occured while creating v4 instance:%v", err)
+	}
+
+	//ping the bootnodes to start discovering the peers
+	go func() {
+		for {
+			for _, bn := range nodes {
+				log.Printf("Pining the nodes:%s", bn.String())
+				if err := udp.Ping(bn); err != nil {
+					log.Printf("Failed to ping this node%s:%v", bn, err)
+				}
+			}
+			time.Sleep(10 * time.Second)
+		}
+	}()
+
+	//logs new peers
+	go func() {
+		knownNodes := make(map[string]struct{})
+
+		for {
+			time.Sleep(10 * time.Second)
+			buckets := udp.TableBuckets()
+			for _, bucket := range buckets {
+				for _, bucketNode := range bucket {
+					node := bucketNode.Node
+					nodeId := node.ID().String()
+					if _, exists := knownNodes[nodeId]; !exists {
+						knownNodes[nodeId] = struct{}{}
+						log.Printf("Discovered new peer:%s\n", node.String())
+					}
+
+				}
+			}
+		}
+	}()
 
 	//discovery table setup
 	// config := discover.Config{
@@ -114,36 +193,37 @@ func main() {
 
 	// fmt.Println(config)
 
-	println("Starting server...")
-	server := &p2p.Server{
-		Config: p2p.Config{
-			MaxPeers:       50,
-			PrivateKey:     privateKey,
-			BootstrapNodes: []*enode.Node{enode_url},
-			Protocols: []p2p.Protocol{
-				{
-					Name:    "DiscoveryV4",
-					Version: 1,
-					Length:  0,
-					Run: func(peer *p2p.Peer, rw p2p.MsgReadWriter) error {
-						println("Started on server")
-						for {
-							// Periodically log peer information
-							fmt.Printf("Connected to peer: %v\n", peer)
-							time.Sleep(10 * time.Second)
-						}
-					},
-				},
-			},
-		},
-	}
+	// println("Starting server...")
+	// server := &p2p.Server{
+	// 	Config: p2p.Config{
+	// 		MaxPeers:       50,
+	// 		PrivateKey:     privateKey,
+	// 		BootstrapNodes: []*enode.Node{enode_url},
+	// 		Protocols: []p2p.Protocol{
+	// 			{
+	// 				Name:    "DiscoveryV4",
+	// 				Version: 1,
+	// 				Length:  0,
+	// 				Run: func(peer *p2p.Peer, rw p2p.MsgReadWriter) error {
+	// 					println("Started on server")
+	// 					for {
+	// 						// Periodically log peer information
+	// 						fmt.Printf("Connected to peer: %v\n", peer)
+	// 						time.Sleep(10 * time.Second)
+	// 					}
+	// 				},
+	// 			},
+	// 		},
+	// 	},
+	// }
 
-	if err := server.Start(); err != nil {
-		log.Printf("Error occured while starting server:%v", err)
-	}
+	// if err := server.Start(); err != nil {
+	// 	log.Printf("Error occured while starting server:%v", err)
+	// }
 
-	defer server.Stop()
+	// defer server.Stop()
 
+	//keep the function running
 	select {}
 
 }
