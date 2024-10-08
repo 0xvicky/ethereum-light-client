@@ -1,4 +1,4 @@
-module ethereum-light-client
+module quasar
 
 go 1.22
 

@@ -1,19 +1,24 @@
-package main
+package peerdiscovery
 
 import (
-	"crypto/ecdsa"
+	"log"
+	"net"
+	"quasar/peerdiscovery/fetchprivatekey"
+	"time"
+
 	"github.com/ethereum/go-ethereum/node"
 	"github.com/ethereum/go-ethereum/p2p/discover"
 	"github.com/ethereum/go-ethereum/p2p/enode"
-	"log"
-	"net"
-	"time"
 )
 
-func main() {
-	var privateKey *ecdsa.PrivateKey
+func Init() {
 
-	println("Started !!")
+	//fetching privatekey
+	privateKey, err := fetchprivatekey.FetchKey()
+	if err != nil {
+		log.Fatalf("Error occured while fetching private key :%v", err)
+	}
+
 	n, err := node.New(&node.Config{}) //n stores the node instance
 	if err != nil {
 		log.Printf("Errorr occured while creating node instance☠️: %v", err)

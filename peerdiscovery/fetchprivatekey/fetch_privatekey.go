@@ -3,10 +3,9 @@ package fetchprivatekey
 import (
 	"crypto/ecdsa"
 	"encoding/hex"
+	"github.com/ethereum/go-ethereum/crypto"
 	"log"
 	"os"
-
-	"github.com/ethereum/go-ethereum/crypto"
 )
 
 const privateKeyPath = "./nodeKey"
@@ -38,7 +37,7 @@ func loadPrivateKey() (*ecdsa.PrivateKey, error) {
 	return crypto.ToECDSA(key)
 }
 
-func FetchKey() *ecdsa.PrivateKey {
+func FetchKey() (*ecdsa.PrivateKey, error) {
 	var privateKey *ecdsa.PrivateKey
 	//generate a new private key
 	privateKey, err := loadPrivateKey()
@@ -56,5 +55,5 @@ func FetchKey() *ecdsa.PrivateKey {
 	}
 	println("Loaded private key")
 
-	return privateKey
+	return privateKey, err
 }
